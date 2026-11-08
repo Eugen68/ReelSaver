@@ -65,7 +65,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
     var urlField by remember { mutableStateOf("") }
     var webView by remember { mutableStateOf<WebView?>(null) }
     val candidates = remember { mutableStateMapOf<String, Candidate>() }
-    var status by remember { mutableStateOf("Dă Share → ReelSaver din Facebook sau lipește un link.") }
+    var status by remember { mutableStateOf("Dă Share → ReelSaver din Facebook/Instagram sau lipește un link.") }
     var progress by remember { mutableStateOf<Float?>(null) }
     var pageToken by remember { mutableIntStateOf(0) }
     var seq by remember { mutableLongStateOf(0L) }
@@ -127,7 +127,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                     onValueChange = { urlField = it },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
-                    placeholder = { Text("https://www.facebook.com/reel/…") },
+                    placeholder = { Text("Link reel Facebook / Instagram") },
                     keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                     keyboardActions = KeyboardActions(onGo = { load(urlField) }),
                 )
@@ -150,7 +150,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                             ): WebResourceResponse? {
                                 // Rulează pe un fir de fundal → trecem pe UI thread.
                                 val url = request.url.toString()
-                                if (url.contains("fbcdn") && url.contains(".mp4")) view.post {
+                                if (VideoExtractor.isMetaCdn(url) && url.contains(".mp4")) view.post {
                                     VideoExtractor.fromIntercept(url, ++seq)?.let { addCandidate(it) }
                                 }
                                 return null

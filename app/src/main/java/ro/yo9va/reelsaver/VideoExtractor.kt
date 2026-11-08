@@ -83,7 +83,7 @@ object VideoExtractor {
      * Parametrul efg (base64 JSON) spune dacă e audio sau video, rezoluția și id-ul clipului.
      */
     fun fromIntercept(url: String, seq: Long): Candidate? {
-        if (!url.contains("fbcdn") || !url.contains(".mp4")) return null
+        if (!isMetaCdn(url) || !url.contains(".mp4")) return null
         val clean = url
             .replace(Regex("[&?]bytestart=\\d+"), "")
             .replace(Regex("[&?]byteend=\\d+"), "")
@@ -105,6 +105,9 @@ object VideoExtractor {
             )
         }
     }
+
+    /** CDN-urile Meta: Facebook (fbcdn.net) și Instagram (cdninstagram.com). */
+    fun isMetaCdn(url: String) = url.contains("fbcdn") || url.contains("cdninstagram")
 
     /** Alege cea mai bună variantă din ce s-a găsit până acum. */
     fun bestPlan(all: Collection<Candidate>): SavePlan? {

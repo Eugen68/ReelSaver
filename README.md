@@ -1,6 +1,6 @@
 # ReelSaver
 
-Salvează în galerie reel-urile de pe Facebook (Movies/ReelSaver).
+Salvează în galerie reel-urile de pe Facebook și Instagram (Movies/ReelSaver).
 
 ## Compilare
 1. Android Studio → Open → folderul `ReelSaver`.
@@ -10,7 +10,7 @@ Salvează în galerie reel-urile de pe Facebook (Movies/ReelSaver).
 Dacă Android Studio cere wrapper: Terminal → `gradle wrapper` (sau acceptă propunerea IDE-ului).
 
 ## Utilizare
-1. Prima dată: deschide aplicația, pune `https://m.facebook.com` și loghează-te în WebView
+1. Prima dată: deschide aplicația, pune `https://m.facebook.com` (și/sau `https://www.instagram.com`) și loghează-te în WebView
    (cookie-urile rămân salvate, deci o faci o singură dată).
 2. În Facebook: pe reel → Share → Mai multe / Copiază link → alege **ReelSaver**
    (sau lipește link-ul în câmpul de sus).
