@@ -134,6 +134,17 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                 Spacer(Modifier.width(8.dp))
                 Button(onClick = { load(urlField) }) { Text("Deschide") }
             }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(onClick = { load("https://m.facebook.com/") }, modifier = Modifier.weight(1f)) {
+                    Text("Facebook")
+                }
+                OutlinedButton(onClick = { load("https://www.instagram.com/") }, modifier = Modifier.weight(1f)) {
+                    Text("Instagram")
+                }
+            }
 
             AndroidView(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
