@@ -4,7 +4,9 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Bundle
+import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
@@ -75,6 +77,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
     var progress by remember { mutableStateOf<Float?>(null) }
     var pageToken by remember { mutableIntStateOf(0) }
     var seq by remember { mutableLongStateOf(0L) }
+    var jsError by remember { mutableStateOf<String?>(null) }
 
     fun addCandidate(c: Candidate) {
         val old = candidates[c.url]
@@ -87,6 +90,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
         if (!u.startsWith("http")) { status = "Link invalid"; return }
         urlField = u
         candidates.clear()
+        jsError = null
         progress = null
         status = "Se încarcă reel-ul…"
         pageToken++
@@ -161,6 +165,13 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
             Surface(tonalElevation = 3.dp) {
                 Column(Modifier.navigationBarsPadding().fillMaxWidth().padding(12.dp)) {
                     Text(status, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    jsError?.let {
+                        Text(
+                            "JS: $it", maxLines = 3, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     progress?.let {
                         Spacer(Modifier.height(6.dp))
                         LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth())
@@ -202,11 +213,19 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.mediaPlaybackRequiresUserGesture = false
-                    // Fără marcajul "; wv" site-urile ne tratează ca pe Chrome, nu ca WebView
-                    // (Instagram altfel ascunde login-ul și împinge spre aplicație).
-                    settings.userAgentString = settings.userAgentString
-                        .replace("; wv", "")
-                        .replace(Regex("Version/\\d+\\.\\d+ "), "")
+                    settings.javaScriptCanOpenWindowsAutomatically = true
+                    settings.loadWithOverviewMode = true
+                    settings.useWideViewPort = true
+                    // Fără WebChromeClient, dialogurile JS ale paginii (alert/confirm) nu se afișează.
+                    // Reținem și ultima eroare JS, ca s-o vedem pe ecran la depanare.
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
+                            if (msg.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                                jsError = msg.message().take(160) + " (linia " + msg.lineNumber() + ")"
+                            }
+                            return false
+                        }
+                    }
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                     webViewClient = object : WebViewClient() {
