@@ -13,6 +13,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.SystemBarStyle
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -20,6 +21,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -35,7 +37,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // Iconițe albe în bara de stare (aplicația are temă închisă).
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
         sharedUrl.value = urlFrom(intent)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
@@ -116,115 +122,123 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
         if (wv != null && wv.canGoBack()) wv.goBack() else onExit()
     }
 
-    Scaffold { pad ->
-        Column(Modifier.padding(pad).fillMaxSize()) {
-            Row(
-                Modifier.fillMaxWidth().padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedTextField(
-                    value = urlField,
-                    onValueChange = { urlField = it },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    placeholder = { Text("Link reel Facebook / Instagram") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
-                    keyboardActions = KeyboardActions(onGo = { load(urlField) }),
-                )
-                Spacer(Modifier.width(8.dp))
-                Button(onClick = { load(urlField) }) { Text("Deschide") }
-            }
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedButton(onClick = { load("https://m.facebook.com/") }, modifier = Modifier.weight(1f)) {
-                    Text("Facebook")
-                }
-                OutlinedButton(onClick = { load("https://www.instagram.com/") }, modifier = Modifier.weight(1f)) {
-                    Text("Instagram")
-                }
-            }
-
-            AndroidView(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                factory = { ctx ->
-                    WebView(ctx).apply {
-                        settings.javaScriptEnabled = true
-                        settings.domStorageEnabled = true
-                        settings.mediaPlaybackRequiresUserGesture = false
-                        CookieManager.getInstance().setAcceptCookie(true)
-                        CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
-                        webViewClient = object : WebViewClient() {
-                            override fun shouldInterceptRequest(
-                                view: WebView, request: WebResourceRequest,
-                            ): WebResourceResponse? {
-                                // Rulează pe un fir de fundal → trecem pe UI thread.
-                                val url = request.url.toString()
-                                if (VideoExtractor.isMetaCdn(url) && url.contains(".mp4")) view.post {
-                                    VideoExtractor.fromIntercept(url, ++seq)?.let { addCandidate(it) }
-                                }
-                                return null
-                            }
-
-                            // Site-ul mobil încearcă să deschidă clipurile în aplicația Facebook
-                            // (fb://fullscreen_video/…, intent://…). Le ignorăm și rămânem în pagină.
-                            override fun shouldOverrideUrlLoading(
-                                view: WebView, request: WebResourceRequest,
-                            ): Boolean {
-                                val scheme = request.url.scheme ?: return true
-                                return scheme != "http" && scheme != "https"
-                            }
-
-                            override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-                                if (url.startsWith("http")) urlField = url
-                            }
-
-                            override fun onPageFinished(view: WebView, url: String) {
-                                CookieManager.getInstance().flush() // păstrăm login-ul
-                                view.evaluateJavascript(VideoExtractor.JS) { res ->
-                                    VideoExtractor.parse(res).forEach(::addCandidate)
-                                }
-                            }
-                        }
-                        webView = this
+    Scaffold(
+        // Bara de sus stă deasupra WebView-ului, nu poate fi acoperită de pagină.
+        topBar = {
+            Surface(tonalElevation = 3.dp) {
+                Column(Modifier.statusBarsPadding().padding(bottom = 6.dp)) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedTextField(
+                            value = urlField,
+                            onValueChange = { urlField = it },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            placeholder = { Text("Link reel Facebook / Instagram") },
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                            keyboardActions = KeyboardActions(onGo = { load(urlField) }),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Button(onClick = { load(urlField) }) { Text("Deschide") }
                     }
-                },
-            )
-
-            Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                Text(status, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                progress?.let {
-                    Spacer(Modifier.height(6.dp))
-                    LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth())
-                }
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = best != null && progress == null,
-                    onClick = {
-                        val plan = best ?: return@Button
-                        val ua = webView?.settings?.userAgentString ?: ""
-                        progress = 0f
-                        status = "Se descarcă (${plan.label})…"
-                        scope.launch {
-                            try {
-                                VideoSaver.save(context, plan, ua) { p ->
-                                    scope.launch { progress = p }
-                                }
-                                status = "Salvat în galerie: Movies/ReelSaver ✔"
-                            } catch (e: Exception) {
-                                status = "Eroare: ${e.message}"
-                                if (plan.video.kind == Kind.PROGRESSIVE) candidates.remove(plan.video.url)
-                            } finally {
-                                progress = null
-                            }
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        OutlinedButton(onClick = { load("https://m.facebook.com/") }, modifier = Modifier.weight(1f)) {
+                            Text("Facebook")
                         }
-                    },
-                ) {
-                    Text(if (best == null) "Caut videoclipul…" else "Salvează în galerie (${best.label})")
+                        OutlinedButton(onClick = { load("https://www.instagram.com/") }, modifier = Modifier.weight(1f)) {
+                            Text("Instagram")
+                        }
+                    }
                 }
             }
-        }
+        },
+        bottomBar = {
+            Surface(tonalElevation = 3.dp) {
+                Column(Modifier.navigationBarsPadding().fillMaxWidth().padding(12.dp)) {
+                    Text(status, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    progress?.let {
+                        Spacer(Modifier.height(6.dp))
+                        LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth())
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = best != null && progress == null,
+                        onClick = {
+                            val plan = best ?: return@Button
+                            val ua = webView?.settings?.userAgentString ?: ""
+                            progress = 0f
+                            status = "Se descarcă (${plan.label})…"
+                            scope.launch {
+                                try {
+                                    VideoSaver.save(context, plan, ua) { p ->
+                                        scope.launch { progress = p }
+                                    }
+                                    status = "Salvat în galerie: Movies/ReelSaver ✔"
+                                } catch (e: Exception) {
+                                    status = "Eroare: ${e.message}"
+                                    if (plan.video.kind == Kind.PROGRESSIVE) candidates.remove(plan.video.url)
+                                } finally {
+                                    progress = null
+                                }
+                            }
+                        },
+                    ) {
+                        Text(if (best == null) "Caut videoclipul…" else "Salvează în galerie (${best.label})")
+                    }
+                }
+            }
+        },
+    ) { pad ->
+        AndroidView(
+            modifier = Modifier.padding(pad).fillMaxSize().clipToBounds(),
+            factory = { ctx ->
+                WebView(ctx).apply {
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    settings.mediaPlaybackRequiresUserGesture = false
+                    CookieManager.getInstance().setAcceptCookie(true)
+                    CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+                    webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(
+                            view: WebView, request: WebResourceRequest,
+                        ): WebResourceResponse? {
+                            // Rulează pe un fir de fundal → trecem pe UI thread.
+                            val url = request.url.toString()
+                            if (VideoExtractor.isMetaCdn(url) && url.contains(".mp4")) view.post {
+                                VideoExtractor.fromIntercept(url, ++seq)?.let { addCandidate(it) }
+                            }
+                            return null
+                        }
+
+                        // Site-ul mobil încearcă să deschidă clipurile în aplicația Facebook
+                        // (fb://fullscreen_video/…, intent://…). Le ignorăm și rămânem în pagină.
+                        override fun shouldOverrideUrlLoading(
+                            view: WebView, request: WebResourceRequest,
+                        ): Boolean {
+                            val scheme = request.url.scheme ?: return true
+                            return scheme != "http" && scheme != "https"
+                        }
+
+                        override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+                            if (url.startsWith("http")) urlField = url
+                        }
+
+                        override fun onPageFinished(view: WebView, url: String) {
+                            CookieManager.getInstance().flush() // păstrăm login-ul
+                            view.evaluateJavascript(VideoExtractor.JS) { res ->
+                                VideoExtractor.parse(res).forEach(::addCandidate)
+                            }
+                        }
+                    }
+                    webView = this
+                }
+            },
+        )
     }
 }
