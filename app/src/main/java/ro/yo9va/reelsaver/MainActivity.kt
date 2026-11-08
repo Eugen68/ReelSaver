@@ -68,10 +68,12 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
     var status by remember { mutableStateOf("Dă Share → ReelSaver din Facebook sau lipește un link.") }
     var progress by remember { mutableStateOf<Float?>(null) }
     var pageToken by remember { mutableIntStateOf(0) }
+    var seq by remember { mutableLongStateOf(0L) }
 
     fun addCandidate(c: Candidate) {
         val old = candidates[c.url]
-        if (old == null || c.rank < old.rank) candidates[c.url] = c
+        // DASH: re-adăugăm ca să actualizăm seq (cel mai recent clip redat câștigă).
+        if (old == null || c.rank < old.rank || c.seq > old.seq) candidates[c.url] = c
     }
 
     fun load(url: String) {
@@ -102,10 +104,11 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
         }
     }
 
-    val best = candidates.values.minByOrNull { it.rank }
+    val best = VideoExtractor.bestPlan(candidates.values)
 
-    LaunchedEffect(best?.url) {
-        if (best != null && progress == null && status.startsWith("Se încarcă")) status = "Video găsit: ${best.label}"
+    LaunchedEffect(best?.label) {
+        if (best != null && progress == null && (status.startsWith("Se încarcă") || status.startsWith("Video găsit")))
+            status = "Video găsit: ${best.label}"
     }
 
     BackHandler {
@@ -146,14 +149,24 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                                 view: WebView, request: WebResourceRequest,
                             ): WebResourceResponse? {
                                 // Rulează pe un fir de fundal → trecem pe UI thread.
-                                VideoExtractor.fromIntercept(request.url.toString())?.let { c ->
-                                    view.post { addCandidate(c) }
+                                val url = request.url.toString()
+                                if (url.contains("fbcdn") && url.contains(".mp4")) view.post {
+                                    VideoExtractor.fromIntercept(url, ++seq)?.let { addCandidate(it) }
                                 }
                                 return null
                             }
 
+                            // Site-ul mobil încearcă să deschidă clipurile în aplicația Facebook
+                            // (fb://fullscreen_video/…, intent://…). Le ignorăm și rămânem în pagină.
+                            override fun shouldOverrideUrlLoading(
+                                view: WebView, request: WebResourceRequest,
+                            ): Boolean {
+                                val scheme = request.url.scheme ?: return true
+                                return scheme != "http" && scheme != "https"
+                            }
+
                             override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
-                                urlField = url
+                                if (url.startsWith("http")) urlField = url
                             }
 
                             override fun onPageFinished(view: WebView, url: String) {
@@ -179,19 +192,19 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                     enabled = best != null && progress == null,
                     onClick = {
-                        val c = best ?: return@Button
+                        val plan = best ?: return@Button
                         val ua = webView?.settings?.userAgentString ?: ""
                         progress = 0f
-                        status = "Se descarcă (${c.label})…"
+                        status = "Se descarcă (${plan.label})…"
                         scope.launch {
                             try {
-                                VideoSaver.save(context, c.url, ua) { p ->
+                                VideoSaver.save(context, plan, ua) { p ->
                                     scope.launch { progress = p }
                                 }
                                 status = "Salvat în galerie: Movies/ReelSaver ✔"
                             } catch (e: Exception) {
                                 status = "Eroare: ${e.message}"
-                                candidates.remove(c.url) // la următoarea apăsare încearcă alt URL
+                                if (plan.video.kind == Kind.PROGRESSIVE) candidates.remove(plan.video.url)
                             } finally {
                                 progress = null
                             }

@@ -1,14 +1,33 @@
 package ro.yo9va.reelsaver
 
+import android.net.Uri
+import android.util.Base64
 import org.json.JSONArray
+import org.json.JSONObject
 import org.json.JSONTokener
 
-/** Un URL video găsit în pagină. rank mai mic = mai bun. */
-data class Candidate(val url: String, val label: String, val rank: Int)
+enum class Kind { PROGRESSIVE, DASH_VIDEO, DASH_AUDIO }
+
+/**
+ * Un URL video găsit. Pentru PROGRESSIVE rank mai mic = mai bun.
+ * Pentru DASH folosim videoId/height/bitrate, iar seq arată cât de recent a fost văzut.
+ */
+data class Candidate(
+    val url: String,
+    val label: String,
+    val kind: Kind,
+    val rank: Int = 0,
+    val videoId: String? = null,
+    val height: Int = 0,
+    val bitrate: Long = 0,
+    val seq: Long = 0,
+)
+
+/** Ce salvăm: fie un fișier progresiv, fie video DASH + (opțional) audio DASH. */
+data class SavePlan(val video: Candidate, val audio: Candidate?, val label: String)
 
 object VideoExtractor {
 
-    /** Cheile din JSON-ul paginii Facebook, în ordinea preferinței. */
     private val KEYS = listOf(
         "browser_native_hd_url" to "HD",
         "playable_url_quality_hd" to "HD",
@@ -18,10 +37,6 @@ object VideoExtractor {
         "sd_src" to "SD",
     )
 
-    /**
-     * JS rulat în WebView: adună src-ul elementelor <video> (dacă nu sunt blob:)
-     * și URL-urile progresive (video+audio) din JSON-ul încorporat în pagină.
-     */
     val JS: String = """
         (function(){
           var out=[];
@@ -40,7 +55,6 @@ object VideoExtractor {
         })()
     """.trimIndent()
 
-    /** Interpretează rezultatul lui evaluateJavascript (un string JSON codat încă o dată). */
     fun parse(jsResult: String?): List<Candidate> {
         if (jsResult.isNullOrBlank() || jsResult == "null") return emptyList()
         return try {
@@ -52,10 +66,10 @@ object VideoExtractor {
                 val url = unescape(pair.getString(1))
                 if (!url.startsWith("http")) return@mapNotNull null
                 if (key == "video") {
-                    Candidate(url, "Video din pagină", 10)
+                    Candidate(url, "video din pagină", Kind.PROGRESSIVE, rank = 10)
                 } else {
                     val idx = KEYS.indexOfFirst { it.first == key }
-                    Candidate(url, KEYS[idx].second, idx)
+                    Candidate(url, KEYS[idx].second, Kind.PROGRESSIVE, rank = idx)
                 }
             }
         } catch (e: Exception) {
@@ -63,15 +77,57 @@ object VideoExtractor {
         }
     }
 
-    /** URL-uri .mp4 de pe fbcdn prinse din traficul WebView-ului (ultimă variantă). */
-    fun fromIntercept(url: String): Candidate? {
+    /**
+     * Cereri .mp4 de pe fbcdn prinse din traficul WebView-ului. Sunt fragmente DASH
+     * (bytestart/byteend); le scoatem ca să cerem fișierul întreg al reprezentării.
+     * Parametrul efg (base64 JSON) spune dacă e audio sau video, rezoluția și id-ul clipului.
+     */
+    fun fromIntercept(url: String, seq: Long): Candidate? {
         if (!url.contains("fbcdn") || !url.contains(".mp4")) return null
-        // Fragmentele DASH au bytestart/byteend; le scoatem ca să cerem fișierul întreg.
         val clean = url
             .replace(Regex("[&?]bytestart=\\d+"), "")
             .replace(Regex("[&?]byteend=\\d+"), "")
             .let { if (!it.contains('?') && it.contains('&')) it.replaceFirst('&', '?') else it }
-        return Candidate(clean, "Flux interceptat (poate fi fără sunet)", 20)
+
+        val efg = decodeEfg(clean)
+        val tag = efg?.optString("vencode_tag").orEmpty()
+        val videoId = efg?.opt("video_id")?.toString()
+        val bitrate = efg?.optLong("bitrate") ?: 0L
+        val isAudio = tag.contains("audio", ignoreCase = true)
+        val height = Regex("(\\d{3,4})p").find(tag)?.groupValues?.get(1)?.toInt() ?: 0
+
+        return if (isAudio) {
+            Candidate(clean, "audio", Kind.DASH_AUDIO, videoId = videoId, bitrate = bitrate, seq = seq)
+        } else {
+            Candidate(
+                clean, if (height > 0) "${height}p" else "video", Kind.DASH_VIDEO,
+                videoId = videoId, height = height, bitrate = bitrate, seq = seq,
+            )
+        }
+    }
+
+    /** Alege cea mai bună variantă din ce s-a găsit până acum. */
+    fun bestPlan(all: Collection<Candidate>): SavePlan? {
+        all.filter { it.kind == Kind.PROGRESSIVE }.minByOrNull { it.rank }?.let {
+            return SavePlan(it, null, "${it.label}, cu sunet")
+        }
+        val videos = all.filter { it.kind == Kind.DASH_VIDEO }
+        if (videos.isEmpty()) return null
+        // Clipul cel mai recent redat (contează dacă ai derulat prin mai multe reel-uri).
+        val id = videos.maxBy { it.seq }.videoId
+        val v = videos.filter { it.videoId == id }.maxBy { it.height * 100_000_000L + it.bitrate }
+        val a = all.filter { it.kind == Kind.DASH_AUDIO && it.videoId == id }.maxByOrNull { it.bitrate }
+        return SavePlan(v, a, v.label + if (a != null) " + sunet" else " (fără sunet încă)")
+    }
+
+    private fun decodeEfg(url: String): JSONObject? = try {
+        val raw = Uri.parse(url).getQueryParameter("efg") ?: null
+        raw?.let {
+            val bytes = Base64.decode(it.replace('-', '+').replace('_', '/'), Base64.DEFAULT)
+            JSONObject(String(bytes))
+        }
+    } catch (e: Exception) {
+        null
     }
 
     private fun unescape(s: String): String {
@@ -80,7 +136,6 @@ object VideoExtractor {
         return r.replace("\\\\", "\\")
     }
 
-    /** Scoate primul URL dintr-un text partajat ("Uite reel-ul ăsta https://..."). */
     fun firstUrl(text: String?): String? =
         text?.let { Regex("https?://\\S+").find(it)?.value?.trimEnd('.', ',', ')') }
 }
