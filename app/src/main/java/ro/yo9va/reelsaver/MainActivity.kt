@@ -51,7 +51,23 @@ private val DIALOG_JS = """
         var r=x.getBoundingClientRect();
         return (x.innerText||'').trim().replace(/\s+/g,' ').slice(0,60)+' ['+Math.round(r.top)+'/'+Math.round(r.height)+']';
       }).join(' | ');
-      return JSON.stringify({n:d.length,clicked:clicked,info:info,h:window.innerHeight,el:document.getElementsByTagName('*').length,tx:(document.body?document.body.innerText.length:-1),txt:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').slice(0,80),url:location.pathname});
+      // Câmpul de login: unde e și ce părinte îl ascunde (îl facem vizibil forțat).
+      var inp='', fixed=[];
+      var u=document.querySelector('input[name=username],input[type=email],input[type=text],input[type=password]');
+      if(u){
+        var r=u.getBoundingClientRect();
+        inp=Math.round(r.left)+','+Math.round(r.top)+' '+Math.round(r.width)+'x'+Math.round(r.height);
+        for(var e=u; e; e=e.parentElement){
+          var cs=getComputedStyle(e);
+          if(cs.opacity==='0'||cs.visibility==='hidden'||cs.display==='none'){
+            fixed.push(e.tagName.toLowerCase()+':'+cs.opacity+'/'+cs.visibility+'/'+cs.display);
+            e.style.setProperty('opacity','1','important');
+            e.style.setProperty('visibility','visible','important');
+            if(cs.display==='none') e.style.setProperty('display','block','important');
+          }
+        }
+      }
+      return JSON.stringify({inp:inp,fixed:fixed.join(' '),n:d.length,clicked:clicked,info:info,h:window.innerHeight,el:document.getElementsByTagName('*').length,tx:(document.body?document.body.innerText.length:-1),txt:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').slice(0,80),url:location.pathname});
     })()
 """.trimIndent()
 
@@ -140,7 +156,9 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                 try {
                     val o = org.json.JSONObject(org.json.JSONTokener(res).nextValue() as String)
                     val clicked = o.optString("clicked")
-                    dialogInfo = "${o.optString("url")} · ${o.optInt("el")} elem., ${o.optInt("tx")} car.: «${o.optString("txt")}»" +
+                    dialogInfo = (if (o.optString("inp").isNotEmpty()) "câmp: ${o.optString("inp")} | " else "") +
+                        (if (o.optString("fixed").isNotEmpty()) "reparat: ${o.optString("fixed")} | " else "") +
+                        "${o.optString("url")} · ${o.optInt("el")} elem., ${o.optInt("tx")} car.: «${o.optString("txt")}»" +
                         (if (o.optInt("n") > 0) " | dialog ×${o.optInt("n")}: ${o.optString("info")}" else "") +
                         (if (clicked.isNotEmpty()) " | apăsat: $clicked" else "")
                 } catch (_: Exception) { }
@@ -201,7 +219,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                     Text(status, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     dialogInfo?.let {
                         Text(
-                            it, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                            it, maxLines = 5, overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
