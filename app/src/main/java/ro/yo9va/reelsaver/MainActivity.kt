@@ -65,6 +65,15 @@ private val DIALOG_JS = """
             e.style.setProperty('visibility','visible','important');
             if(cs.display==='none') e.style.setProperty('display','block','important');
           }
+          // Alte proprietăți care pot face un element nedesenabil/neatingibil.
+          var tag=e.tagName.toLowerCase();
+          if(cs.clipPath && cs.clipPath!=='none'){ fixed.push(tag+' clip:'+cs.clipPath.slice(0,25)); e.style.setProperty('clip-path','none','important'); }
+          if(cs.contentVisibility && cs.contentVisibility!=='visible'){ fixed.push(tag+' cv:'+cs.contentVisibility); e.style.setProperty('content-visibility','visible','important'); }
+          var mk=cs.webkitMaskImage||cs.maskImage;
+          if(mk && mk!=='none'){ fixed.push(tag+' mask'); e.style.setProperty('-webkit-mask-image','none','important'); e.style.setProperty('mask-image','none','important'); }
+          if(cs.filter && cs.filter!=='none'){ fixed.push(tag+' filter:'+cs.filter.slice(0,20)); e.style.setProperty('filter','none','important'); }
+          if(cs.pointerEvents==='none'){ fixed.push(tag+' pe:none'); e.style.setProperty('pointer-events','auto','important'); }
+          if(cs.transform && cs.transform!=='none'){ fixed.push(tag+' tr:'+cs.transform.slice(0,30)); }
         }
         // Ce element e de fapt deasupra câmpului? Dacă e un strat străin, îl ascundem.
         var cx=r.left+r.width/2, cy=r.top+r.height/2;
