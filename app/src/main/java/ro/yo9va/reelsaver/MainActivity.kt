@@ -52,7 +52,7 @@ private val DIALOG_JS = """
         return (x.innerText||'').trim().replace(/\s+/g,' ').slice(0,60)+' ['+Math.round(r.top)+'/'+Math.round(r.height)+']';
       }).join(' | ');
       // Câmpul de login: unde e și ce părinte îl ascunde (îl facem vizibil forțat).
-      var inp='', fixed=[];
+      var inp='', fixed=[], top='';
       var u=document.querySelector('input[name=username],input[type=email],input[type=text],input[type=password]');
       if(u){
         var r=u.getBoundingClientRect();
@@ -66,8 +66,18 @@ private val DIALOG_JS = """
             if(cs.display==='none') e.style.setProperty('display','block','important');
           }
         }
+        // Ce element e de fapt deasupra câmpului? Dacă e un strat străin, îl ascundem.
+        var cx=r.left+r.width/2, cy=r.top+r.height/2;
+        for(var k=0;k<5;k++){
+          var t=document.elementFromPoint(cx,cy);
+          if(!t){ top='nimic'; break; }
+          if(t===u||u.contains(t)||t.contains(u)){ top=(t===u?'câmpul':t.tagName.toLowerCase()); break; }
+          var c=t; while(c.parentElement && !c.parentElement.contains(u)) c=c.parentElement;
+          fixed.push('acoperit de '+c.tagName.toLowerCase()+'.'+String(c.className).slice(0,15));
+          c.style.setProperty('display','none','important');
+        }
       }
-      return JSON.stringify({inp:inp,fixed:fixed.join(' '),n:d.length,clicked:clicked,info:info,h:window.innerHeight,el:document.getElementsByTagName('*').length,tx:(document.body?document.body.innerText.length:-1),txt:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').slice(0,80),url:location.pathname});
+      return JSON.stringify({top:top,inp:inp,fixed:fixed.join(' '),n:d.length,clicked:clicked,info:info,h:window.innerHeight,el:document.getElementsByTagName('*').length,tx:(document.body?document.body.innerText.length:-1),txt:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').slice(0,80),url:location.pathname});
     })()
 """.trimIndent()
 
@@ -118,6 +128,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
     var seq by remember { mutableLongStateOf(0L) }
     var jsError by remember { mutableStateOf<String?>(null) }
     var dialogInfo by remember { mutableStateOf<String?>(null) }
+    var repainted by remember { mutableStateOf(false) }
 
     fun addCandidate(c: Candidate) {
         val old = candidates[c.url]
@@ -132,6 +143,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
         candidates.clear()
         jsError = null
         dialogInfo = null
+        repainted = false
         progress = null
         status = "Se încarcă reel-ul…"
         pageToken++
@@ -156,7 +168,15 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                 try {
                     val o = org.json.JSONObject(org.json.JSONTokener(res).nextValue() as String)
                     val clicked = o.optString("clicked")
-                    dialogInfo = (if (o.optString("inp").isNotEmpty()) "câmp: ${o.optString("inp")} | " else "") +
+                    val top = o.optString("top")
+                    // Câmpul e deasupra tuturor, dar ecranul e alb → forțăm redesenarea WebView-ului.
+                    if (top == "câmpul" && !repainted) {
+                        repainted = true
+                        wv.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
+                        wv.postDelayed({ wv.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null); wv.invalidate() }, 500)
+                    }
+                    dialogInfo = (if (top.isNotEmpty()) "sus: $top | " else "") +
+                        (if (o.optString("inp").isNotEmpty()) "câmp: ${o.optString("inp")} | " else "") +
                         (if (o.optString("fixed").isNotEmpty()) "reparat: ${o.optString("fixed")} | " else "") +
                         "${o.optString("url")} · ${o.optInt("el")} elem., ${o.optInt("tx")} car.: «${o.optString("txt")}»" +
                         (if (o.optInt("n") > 0) " | dialog ×${o.optInt("n")}: ${o.optString("info")}" else "") +
