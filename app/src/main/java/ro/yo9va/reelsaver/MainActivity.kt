@@ -147,10 +147,10 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                         Modifier.fillMaxWidth().padding(horizontal = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
-                        OutlinedButton(onClick = { load("https://m.facebook.com/") }, modifier = Modifier.weight(1f)) {
+                        OutlinedButton(onClick = { load("https://m.facebook.com/login/") }, modifier = Modifier.weight(1f)) {
                             Text("Facebook")
                         }
-                        OutlinedButton(onClick = { load("https://www.instagram.com/") }, modifier = Modifier.weight(1f)) {
+                        OutlinedButton(onClick = { load("https://www.instagram.com/accounts/login/") }, modifier = Modifier.weight(1f)) {
                             Text("Instagram")
                         }
                     }
@@ -202,6 +202,11 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
                     settings.mediaPlaybackRequiresUserGesture = false
+                    // Fără marcajul "; wv" site-urile ne tratează ca pe Chrome, nu ca WebView
+                    // (Instagram altfel ascunde login-ul și împinge spre aplicație).
+                    settings.userAgentString = settings.userAgentString
+                        .replace("; wv", "")
+                        .replace(Regex("Version/\\d+\\.\\d+ "), "")
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                     webViewClient = object : WebViewClient() {
