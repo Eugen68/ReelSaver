@@ -32,6 +32,29 @@ import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+/**
+ * Găsește ferestrele de dialog ale paginii (ex. cookie-uri Instagram în UE), apasă butonul
+ * "refuză opționale" / "nu acum" dacă există și raportează ce a găsit (pentru depanare).
+ */
+private val DIALOG_JS = """
+    (function(){
+      var d=[].slice.call(document.querySelectorAll('[role=dialog],[aria-modal=true]'));
+      var re=/^(Refuz|Decline|Respinge|Only allow essential|Permite doar|Nu acum|Not now)/i;
+      var clicked='';
+      d.forEach(function(x){
+        x.querySelectorAll('button,[role=button]').forEach(function(b){
+          var t=(b.innerText||'').trim();
+          if(!clicked && re.test(t)){ b.click(); clicked=t; }
+        });
+      });
+      var info=d.map(function(x){
+        var r=x.getBoundingClientRect();
+        return (x.innerText||'').trim().replace(/\s+/g,' ').slice(0,60)+' ['+Math.round(r.top)+'/'+Math.round(r.height)+']';
+      }).join(' | ');
+      return JSON.stringify({n:d.length,clicked:clicked,info:info,h:window.innerHeight});
+    })()
+""".trimIndent()
+
 class MainActivity : ComponentActivity() {
 
     /** URL primit prin Share; Compose îl observă și îl încarcă. */
@@ -78,6 +101,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
     var pageToken by remember { mutableIntStateOf(0) }
     var seq by remember { mutableLongStateOf(0L) }
     var jsError by remember { mutableStateOf<String?>(null) }
+    var dialogInfo by remember { mutableStateOf<String?>(null) }
 
     fun addCandidate(c: Candidate) {
         val old = candidates[c.url]
@@ -91,6 +115,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
         urlField = u
         candidates.clear()
         jsError = null
+        dialogInfo = null
         progress = null
         status = "Se încarcă reel-ul…"
         pageToken++
@@ -110,6 +135,17 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
             delay(2000)
             wv.evaluateJavascript(VideoExtractor.JS) { res ->
                 VideoExtractor.parse(res).forEach(::addCandidate)
+            }
+            wv.evaluateJavascript(DIALOG_JS) { res ->
+                try {
+                    val o = org.json.JSONObject(org.json.JSONTokener(res).nextValue() as String)
+                    val clicked = o.optString("clicked")
+                    if (o.optInt("n") > 0 || clicked.isNotEmpty()) {
+                        dialogInfo = "Dialog ×${o.optInt("n")} (h=${o.optInt("h")})" +
+                            (if (clicked.isNotEmpty()) " apăsat: $clicked" else "") +
+                            ": " + o.optString("info")
+                    }
+                } catch (_: Exception) { }
             }
         }
     }
@@ -165,6 +201,13 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
             Surface(tonalElevation = 3.dp) {
                 Column(Modifier.navigationBarsPadding().fillMaxWidth().padding(12.dp)) {
                     Text(status, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    dialogInfo?.let {
+                        Text(
+                            it, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     jsError?.let {
                         Text(
                             "JS: $it", maxLines = 3, overflow = TextOverflow.Ellipsis,
