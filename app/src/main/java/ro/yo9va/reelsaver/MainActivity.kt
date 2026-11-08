@@ -51,7 +51,7 @@ private val DIALOG_JS = """
         var r=x.getBoundingClientRect();
         return (x.innerText||'').trim().replace(/\s+/g,' ').slice(0,60)+' ['+Math.round(r.top)+'/'+Math.round(r.height)+']';
       }).join(' | ');
-      return JSON.stringify({n:d.length,clicked:clicked,info:info,h:window.innerHeight});
+      return JSON.stringify({n:d.length,clicked:clicked,info:info,h:window.innerHeight,el:document.getElementsByTagName('*').length,tx:(document.body?document.body.innerText.length:-1)});
     })()
 """.trimIndent()
 
@@ -140,11 +140,9 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                 try {
                     val o = org.json.JSONObject(org.json.JSONTokener(res).nextValue() as String)
                     val clicked = o.optString("clicked")
-                    if (o.optInt("n") > 0 || clicked.isNotEmpty()) {
-                        dialogInfo = "Dialog ×${o.optInt("n")} (h=${o.optInt("h")})" +
-                            (if (clicked.isNotEmpty()) " apăsat: $clicked" else "") +
-                            ": " + o.optString("info")
-                    }
+                    dialogInfo = "Pagină: ${o.optInt("el")} elem., ${o.optInt("tx")} car. text, h=${o.optInt("h")}" +
+                        (if (o.optInt("n") > 0) " | dialog ×${o.optInt("n")}: ${o.optString("info")}" else "") +
+                        (if (clicked.isNotEmpty()) " | apăsat: $clicked" else "")
                 } catch (_: Exception) { }
             }
         }
@@ -288,8 +286,11 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                         override fun shouldOverrideUrlLoading(
                             view: WebView, request: WebResourceRequest,
                         ): Boolean {
-                            val scheme = request.url.scheme ?: return true
-                            return scheme != "http" && scheme != "https"
+                            // Doar navigarea paginii principale spre scheme de aplicații; cadrele interne
+                            // (about:blank, blob:, data:) trebuie lăsate în pace, altfel Instagram nu pornește.
+                            if (!request.isForMainFrame) return false
+                            val scheme = request.url.scheme?.lowercase() ?: return false
+                            return scheme !in setOf("http", "https", "about", "data", "blob", "javascript")
                         }
 
                         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
