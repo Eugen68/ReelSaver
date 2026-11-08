@@ -4,7 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import android.graphics.Bitmap
 import android.os.Bundle
-import android.webkit.ConsoleMessage
 import android.webkit.CookieManager
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -32,61 +31,12 @@ import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-/**
- * Găsește ferestrele de dialog ale paginii (ex. cookie-uri Instagram în UE), apasă butonul
- * "refuză opționale" / "nu acum" dacă există și raportează ce a găsit (pentru depanare).
- */
-private val DIALOG_JS = """
+/** Închide fereastra de cookie-uri (UE) apăsând "Refuză opționale" / "Nu acum", dacă apare. */
+private val COOKIE_JS = """
     (function(){
-      var d=[].slice.call(document.querySelectorAll('[role=dialog],[aria-modal=true]'));
       var re=/^(Refuz|Decline|Respinge|Only allow essential|Permite doar|Nu acum|Not now)/i;
-      var clicked='';
-      d.forEach(function(x){
-        x.querySelectorAll('button,[role=button]').forEach(function(b){
-          var t=(b.innerText||'').trim();
-          if(!clicked && re.test(t)){ b.click(); clicked=t; }
-        });
-      });
-      var info=d.map(function(x){
-        var r=x.getBoundingClientRect();
-        return (x.innerText||'').trim().replace(/\s+/g,' ').slice(0,60)+' ['+Math.round(r.top)+'/'+Math.round(r.height)+']';
-      }).join(' | ');
-      // Câmpul de login: unde e și ce părinte îl ascunde (îl facem vizibil forțat).
-      var inp='', fixed=[], top='';
-      var u=document.querySelector('input[name=username],input[type=email],input[type=text],input[type=password]');
-      if(u){
-        var r=u.getBoundingClientRect();
-        inp=Math.round(r.left)+','+Math.round(r.top)+' '+Math.round(r.width)+'x'+Math.round(r.height);
-        for(var e=u; e; e=e.parentElement){
-          var cs=getComputedStyle(e);
-          if(cs.opacity==='0'||cs.visibility==='hidden'||cs.display==='none'){
-            fixed.push(e.tagName.toLowerCase()+':'+cs.opacity+'/'+cs.visibility+'/'+cs.display);
-            e.style.setProperty('opacity','1','important');
-            e.style.setProperty('visibility','visible','important');
-            if(cs.display==='none') e.style.setProperty('display','block','important');
-          }
-          // Alte proprietăți care pot face un element nedesenabil/neatingibil.
-          var tag=e.tagName.toLowerCase();
-          if(cs.clipPath && cs.clipPath!=='none'){ fixed.push(tag+' clip:'+cs.clipPath.slice(0,25)); e.style.setProperty('clip-path','none','important'); }
-          if(cs.contentVisibility && cs.contentVisibility!=='visible'){ fixed.push(tag+' cv:'+cs.contentVisibility); e.style.setProperty('content-visibility','visible','important'); }
-          var mk=cs.webkitMaskImage||cs.maskImage;
-          if(mk && mk!=='none'){ fixed.push(tag+' mask'); e.style.setProperty('-webkit-mask-image','none','important'); e.style.setProperty('mask-image','none','important'); }
-          if(cs.filter && cs.filter!=='none'){ fixed.push(tag+' filter:'+cs.filter.slice(0,20)); e.style.setProperty('filter','none','important'); }
-          if(cs.pointerEvents==='none'){ fixed.push(tag+' pe:none'); e.style.setProperty('pointer-events','auto','important'); }
-          if(cs.transform && cs.transform!=='none'){ fixed.push(tag+' tr:'+cs.transform.slice(0,30)); }
-        }
-        // Ce element e de fapt deasupra câmpului? Dacă e un strat străin, îl ascundem.
-        var cx=r.left+r.width/2, cy=r.top+r.height/2;
-        for(var k=0;k<5;k++){
-          var t=document.elementFromPoint(cx,cy);
-          if(!t){ top='nimic'; break; }
-          if(t===u||u.contains(t)||t.contains(u)){ top=(t===u?'câmpul':t.tagName.toLowerCase()); break; }
-          var c=t; while(c.parentElement && !c.parentElement.contains(u)) c=c.parentElement;
-          fixed.push('acoperit de '+c.tagName.toLowerCase()+'.'+String(c.className).slice(0,15));
-          c.style.setProperty('display','none','important');
-        }
-      }
-      return JSON.stringify({top:top,inp:inp,fixed:fixed.join(' '),n:d.length,clicked:clicked,info:info,h:window.innerHeight,el:document.getElementsByTagName('*').length,tx:(document.body?document.body.innerText.length:-1),txt:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').slice(0,80),url:location.pathname});
+      document.querySelectorAll('[role=dialog] button,[role=dialog] [role=button],[aria-modal=true] button')
+        .forEach(function(b){ if(re.test((b.innerText||'').trim())) b.click(); });
     })()
 """.trimIndent()
 
@@ -131,13 +81,10 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
     var urlField by remember { mutableStateOf("") }
     var webView by remember { mutableStateOf<WebView?>(null) }
     val candidates = remember { mutableStateMapOf<String, Candidate>() }
-    var status by remember { mutableStateOf("Dă Share → ReelSaver din Facebook/Instagram sau lipește un link.") }
+    var status by remember { mutableStateOf("Dă Share → ReelSaver din Facebook sau lipește un link.") }
     var progress by remember { mutableStateOf<Float?>(null) }
     var pageToken by remember { mutableIntStateOf(0) }
     var seq by remember { mutableLongStateOf(0L) }
-    var jsError by remember { mutableStateOf<String?>(null) }
-    var dialogInfo by remember { mutableStateOf<String?>(null) }
-    var repainted by remember { mutableStateOf(false) }
 
     fun addCandidate(c: Candidate) {
         val old = candidates[c.url]
@@ -150,9 +97,6 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
         if (!u.startsWith("http")) { status = "Link invalid"; return }
         urlField = u
         candidates.clear()
-        jsError = null
-        dialogInfo = null
-        repainted = false
         progress = null
         status = "Se încarcă reel-ul…"
         pageToken++
@@ -173,25 +117,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
             wv.evaluateJavascript(VideoExtractor.JS) { res ->
                 VideoExtractor.parse(res).forEach(::addCandidate)
             }
-            wv.evaluateJavascript(DIALOG_JS) { res ->
-                try {
-                    val o = org.json.JSONObject(org.json.JSONTokener(res).nextValue() as String)
-                    val clicked = o.optString("clicked")
-                    val top = o.optString("top")
-                    // Câmpul e deasupra tuturor, dar ecranul e alb → forțăm redesenarea WebView-ului.
-                    if (top == "câmpul" && !repainted) {
-                        repainted = true
-                        wv.setLayerType(android.view.View.LAYER_TYPE_SOFTWARE, null)
-                        wv.postDelayed({ wv.setLayerType(android.view.View.LAYER_TYPE_HARDWARE, null); wv.invalidate() }, 500)
-                    }
-                    dialogInfo = (if (top.isNotEmpty()) "sus: $top | " else "") +
-                        (if (o.optString("inp").isNotEmpty()) "câmp: ${o.optString("inp")} | " else "") +
-                        (if (o.optString("fixed").isNotEmpty()) "reparat: ${o.optString("fixed")} | " else "") +
-                        "${o.optString("url")} · ${o.optInt("el")} elem., ${o.optInt("tx")} car.: «${o.optString("txt")}»" +
-                        (if (o.optInt("n") > 0) " | dialog ×${o.optInt("n")}: ${o.optString("info")}" else "") +
-                        (if (clicked.isNotEmpty()) " | apăsat: $clicked" else "")
-                } catch (_: Exception) { }
-            }
+            wv.evaluateJavascript(COOKIE_JS, null)
         }
     }
 
@@ -221,24 +147,17 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                             onValueChange = { urlField = it },
                             modifier = Modifier.weight(1f),
                             singleLine = true,
-                            placeholder = { Text("Link reel Facebook / Instagram") },
+                            placeholder = { Text("Link reel Facebook") },
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                             keyboardActions = KeyboardActions(onGo = { load(urlField) }),
                         )
                         Spacer(Modifier.width(8.dp))
                         Button(onClick = { load(urlField) }) { Text("Deschide") }
                     }
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        OutlinedButton(onClick = { load("https://m.facebook.com/login/") }, modifier = Modifier.weight(1f)) {
-                            Text("Facebook")
-                        }
-                        OutlinedButton(onClick = { load("https://www.instagram.com/") }, modifier = Modifier.weight(1f)) {
-                            Text("Instagram")
-                        }
-                    }
+                    OutlinedButton(
+                        onClick = { load("https://m.facebook.com/login/") },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    ) { Text("Facebook (login)") }
                 }
             }
         },
@@ -246,20 +165,6 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
             Surface(tonalElevation = 3.dp) {
                 Column(Modifier.navigationBarsPadding().fillMaxWidth().padding(12.dp)) {
                     Text(status, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    dialogInfo?.let {
-                        Text(
-                            it, maxLines = 5, overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-                    jsError?.let {
-                        Text(
-                            "JS: $it", maxLines = 3, overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
                     progress?.let {
                         Spacer(Modifier.height(6.dp))
                         LinearProgressIndicator(progress = { it }, modifier = Modifier.fillMaxWidth())
@@ -304,16 +209,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                     settings.javaScriptCanOpenWindowsAutomatically = true
                     settings.loadWithOverviewMode = true
                     settings.useWideViewPort = true
-                    // Fără WebChromeClient, dialogurile JS ale paginii (alert/confirm) nu se afișează.
-                    // Reținem și ultima eroare JS, ca s-o vedem pe ecran la depanare.
-                    webChromeClient = object : WebChromeClient() {
-                        override fun onConsoleMessage(msg: ConsoleMessage): Boolean {
-                            if (msg.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
-                                jsError = msg.message().take(160) + " (linia " + msg.lineNumber() + ")"
-                            }
-                            return false
-                        }
-                    }
+                    webChromeClient = WebChromeClient()
                     CookieManager.getInstance().setAcceptCookie(true)
                     CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
                     webViewClient = object : WebViewClient() {
@@ -322,7 +218,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                         ): WebResourceResponse? {
                             // Rulează pe un fir de fundal → trecem pe UI thread.
                             val url = request.url.toString()
-                            if (VideoExtractor.isMetaCdn(url) && url.contains(".mp4")) view.post {
+                            if (VideoExtractor.isFbCdn(url) && url.contains(".mp4")) view.post {
                                 VideoExtractor.fromIntercept(url, ++seq)?.let { addCandidate(it) }
                             }
                             return null
@@ -333,8 +229,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                         override fun shouldOverrideUrlLoading(
                             view: WebView, request: WebResourceRequest,
                         ): Boolean {
-                            // Doar navigarea paginii principale spre scheme de aplicații; cadrele interne
-                            // (about:blank, blob:, data:) trebuie lăsate în pace, altfel Instagram nu pornește.
+                            // Doar navigarea paginii principale; cadrele interne (about:blank, blob:) rămân.
                             if (!request.isForMainFrame) return false
                             val scheme = request.url.scheme?.lowercase() ?: return false
                             return scheme !in setOf("http", "https", "about", "data", "blob", "javascript")

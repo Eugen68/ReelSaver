@@ -80,10 +80,7 @@ object VideoSaver {
             connectTimeout = 15_000
             readTimeout = 30_000
             setRequestProperty("User-Agent", userAgent)
-            setRequestProperty(
-                "Referer",
-                if (url.contains("cdninstagram")) "https://www.instagram.com/" else "https://m.facebook.com/",
-            )
+            setRequestProperty("Referer", "https://m.facebook.com/")
             CookieManager.getInstance().getCookie(url)?.let { setRequestProperty("Cookie", it) }
         }
         try {
