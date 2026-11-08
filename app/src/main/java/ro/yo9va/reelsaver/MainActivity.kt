@@ -51,7 +51,7 @@ private val DIALOG_JS = """
         var r=x.getBoundingClientRect();
         return (x.innerText||'').trim().replace(/\s+/g,' ').slice(0,60)+' ['+Math.round(r.top)+'/'+Math.round(r.height)+']';
       }).join(' | ');
-      return JSON.stringify({n:d.length,clicked:clicked,info:info,h:window.innerHeight,el:document.getElementsByTagName('*').length,tx:(document.body?document.body.innerText.length:-1)});
+      return JSON.stringify({n:d.length,clicked:clicked,info:info,h:window.innerHeight,el:document.getElementsByTagName('*').length,tx:(document.body?document.body.innerText.length:-1),txt:(document.body?document.body.innerText:'').replace(/\\s+/g,' ').slice(0,80),url:location.pathname});
     })()
 """.trimIndent()
 
@@ -140,7 +140,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                 try {
                     val o = org.json.JSONObject(org.json.JSONTokener(res).nextValue() as String)
                     val clicked = o.optString("clicked")
-                    dialogInfo = "Pagină: ${o.optInt("el")} elem., ${o.optInt("tx")} car. text, h=${o.optInt("h")}" +
+                    dialogInfo = "${o.optString("url")} · ${o.optInt("el")} elem., ${o.optInt("tx")} car.: «${o.optString("txt")}»" +
                         (if (o.optInt("n") > 0) " | dialog ×${o.optInt("n")}: ${o.optString("info")}" else "") +
                         (if (clicked.isNotEmpty()) " | apăsat: $clicked" else "")
                 } catch (_: Exception) { }
@@ -188,7 +188,7 @@ fun ReelSaverScreen(sharedUrl: String?, onExit: () -> Unit) {
                         OutlinedButton(onClick = { load("https://m.facebook.com/login/") }, modifier = Modifier.weight(1f)) {
                             Text("Facebook")
                         }
-                        OutlinedButton(onClick = { load("https://www.instagram.com/accounts/login/") }, modifier = Modifier.weight(1f)) {
+                        OutlinedButton(onClick = { load("https://www.instagram.com/") }, modifier = Modifier.weight(1f)) {
                             Text("Instagram")
                         }
                     }
