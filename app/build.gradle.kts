@@ -16,6 +16,17 @@ android {
         versionName = "1.0"
     }
 
+    signingConfigs {
+        // Cheie de debug fixă în repo: toate build-urile CI au aceeași semnătură,
+        // deci versiunile noi se instalează peste cele vechi.
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
